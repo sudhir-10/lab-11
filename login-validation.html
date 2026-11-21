@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User Validation</title>
+<style>
+  :root {
+    --bg: #f3f5f9;
+    --card: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --ok: #15803d;
+    --ok-bg: #dcfce7;
+    --err: #b91c1c;
+    --err-bg: #fee2e2;
+    --border: #d1d5db;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    padding: 16px;
+  }
+  .card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--card);
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.08);
+    padding: 32px 28px;
+  }
+  h1 { margin: 0 0 4px; font-size: 24px; }
+  .sub { margin: 0 0 24px; color: var(--muted); font-size: 14px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  input {
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+    margin-bottom: 16px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+  button {
+    width: 100%;
+    padding: 12px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  button:hover { background: var(--primary-dark); }
+  button:disabled { opacity: .6; cursor: not-allowed; }
+  .msg {
+    display: none;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .msg.error { display: block; background: var(--err-bg); color: var(--err); }
+  .hint {
+    margin-top: 22px;
+    padding: 12px;
+    background: #f9fafb;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .hint b { color: var(--text); }
+  .hint code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; }
+
+  /* success page */
+  .success { text-align: center; }
+  .tick {
+    width: 68px; height: 68px; border-radius: 50%;
+    background: var(--ok-bg); color: var(--ok);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 36px; margin: 0 auto 16px;
+  }
+  .success h1 { color: var(--ok); }
+  .success p { color: var(--muted); }
+  .logout { margin-top: 20px; background: #374151; }
+  .logout:hover { background: #111827; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN PAGE -->
+<div class="card" id="loginPage">
+  <h1>Welcome back</h1>
+  <p class="sub">Sign in with your login name and password.</p>
+
+  <div id="message" class="msg" role="alert"></div>
+
+  <form id="loginForm" autocomplete="off">
+    <label for="username">Login name</label>
+    <input id="username" type="text" placeholder="Enter login name" required>
+
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="Enter password" required>
+
+    <button type="submit" id="submitBtn">Login</button>
+  </form>
+
+  <div class="hint">
+    <b>Demo accounts</b> (stored in the database):<br>
+    <code>admin</code> / <code>admin123</code><br>
+    <code>john</code> / <code>john@123</code><br>
+    <code>priya</code> / <code>priya@2026</code>
+  </div>
+</div>
+
+<!-- SUCCESS PAGE -->
+<div class="card success hidden" id="successPage">
+  <div class="tick">&#10003;</div>
+  <h1>Login Successful</h1>
+  <p id="welcomeText"></p>
+  <button class="logout" id="logoutBtn">Logout</button>
+</div>
+
+<script>
+/*
+ * Database layer: IndexedDB (a real in-browser database).
+ * Passwords are stored as SHA-256 hashes, never as plain text.
+ * Validation flow: read user record by login name -> compare password hash
+ * -> show success page on match, otherwise show a failure message.
+ */
+const DB_NAME = "UserValidationDB";
+const STORE = "users";
+
+// ---------- hashing ----------
+async function hash(text) {
+  if (window.crypto && crypto.subtle) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  // Fallback for environments without SubtleCrypto (simple non-secure hash)
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+  return "fb-" + h.toString(16);
+}
+
+// ---------- database helpers ----------
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(STORE, { keyPath: "username" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function getUser(db, username) {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(STORE).objectStore(STORE).get(username);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function countUsers(db) {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(STORE).objectStore(STORE).count();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function seedIfEmpty(db) {
+  if (await countUsers(db) > 0) return;
+  const seed = [
+    { username: "admin", password: "admin123",    fullName: "Administrator" },
+    { username: "john",  password: "john@123",    fullName: "John Doe" },
+    { username: "priya", password: "priya@2026",  fullName: "Priya Sharma" }
+  ];
+  const records = [];
+  for (const u of seed) {
+    records.push({ username: u.username, passwordHash: await hash(u.password), fullName: u.fullName });
+  }
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    records.forEach(r => store.put(r));
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ---------- UI ----------
+const loginPage = document.getElementById("loginPage");
+const successPage = document.getElementById("successPage");
+const form = document.getElementById("loginForm");
+const msg = document.getElementById("message");
+const btn = document.getElementById("submitBtn");
+
+function showError(text) {
+  msg.textContent = text;
+  msg.className = "msg error";
+}
+function clearError() { msg.className = "msg"; msg.textContent = ""; }
+
+let dbPromise = openDB().then(async db => { await seedIfEmpty(db); return db; });
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearError();
+  btn.disabled = true;
+
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+
+  try {
+    const db = await dbPromise;
+    const user = await getUser(db, username);
+    const enteredHash = await hash(password);
+
+    if (user && user.passwordHash === enteredHash) {
+      document.getElementById("welcomeText").textContent =
+        "Hello, " + user.fullName + "! You have been successfully authenticated.";
+      loginPage.classList.add("hidden");
+      successPage.classList.remove("hidden");
+    } else {
+      // Same message for unknown user and wrong password (avoids revealing which one failed)
+      showError("Login failed: invalid login name or password.");
+    }
+  } catch (err) {
+    showError("Database error: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("logoutBtn").addEventListener("click", () => {
+  form.reset();
+  clearError();
+  successPage.classList.add("hidden");
+  loginPage.classList.remove("hidden");
+});
+</script>
+</body>
+</html>
